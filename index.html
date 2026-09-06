@@ -1,0 +1,20 @@
+# ClaseB - Subtitulador en tiempo real
+
+Proyecto prototipo para clase de developer.
+
+## Objetivo
+Capturar el audio de salida del sistema (no el micrófono) y transcribirlo
+a texto en tiempo real usando faster-whisper.
+
+## Estructura
+- src/main.py: punto de entrada del programa.
+- src/audio_capture.py: captura el audio del sistema (PipeWire monitor).
+- src/transcriber.py: convierte el audio capturado a texto.
+- models/: modelos de Whisper descargados.
+- tests/: pruebas individuales de cada módulo.
+- docs/: notas y apuntes del proceso de aprendizaje.
+
+## Cómo levantar el entorno (pendiente, próximo paso)
+python3 -m venv venv
+source venv/bin/activate
+pip install faster-whisper sounddevice numpy

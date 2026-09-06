@@ -1,0 +1,219 @@
+ 
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcriptor en Tiempo Real</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle-box {
+            background: rgba(0, 0, 0, 0.85);
+            border-radius: 15px;
+            padding: 40px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+        }
+
+        .current-subtitle {
+            color: #fff;
+            font-size: 2em;
+            text-align: center;
+            min-height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .history-box {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+
+        .history-title {
+            color: #667eea;
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .history-list {
+            list-style: none;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .history-item {
+            padding: 12px 15px;
+            margin-bottom: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .history-timestamp {
+            color: #667eea;
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+
+        .history-text {
+            color: #333;
+            font-size: 1.1em;
+            line-height: 1.5;
+        }
+
+        .status {
+            text-align: center;
+            color: white;
+            margin-top: 20px;
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .listening {
+            color: #4ade80;
+            font-weight: bold;
+        }
+
+        /* Scrollbar personalizado */
+        .history-list::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .history-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .history-list::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 10px;
+        }
+
+        .history-list::-webkit-scrollbar-thumb:hover {
+            background: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Transcriptor en Tiempo Real</h1>
+
+        <!-- Subtítulo actual (grande) -->
+        <div class="subtitle-box">
+            <div class="current-subtitle" id="currentSubtitle">
+                Escuchando...
+            </div>
+        </div>
+
+        <!-- Historial de transcripciones -->
+        <div class="history-box">
+            <h2 class="history-title">📝 Historial</h2>
+            <ul class="history-list" id="historyList">
+                <!-- Se llena dinámicamente con JavaScript -->
+            </ul>
+        </div>
+
+        <div class="status">
+            <span id="statusText">Conectando...</span>
+        </div>
+    </div>
+
+    <script>
+        // Elementos del DOM
+        const currentSubtitleEl = document.getElementById('currentSubtitle');
+        const historyListEl = document.getElementById('historyList');
+        const statusTextEl = document.getElementById('statusText');
+
+        // Cargar transcripciones iniciales
+        async function loadTranscriptions() {
+            try {
+                const response = await fetch('/api/transcriptions');
+                const transcriptions = await response.json();
+                
+                if (transcriptions.length > 0) {
+                    // Actualizar subtítulo actual (el último)
+                    const last = transcriptions[transcriptions.length - 1];
+                    currentSubtitleEl.textContent = last.text || 'Escuchando...';
+                    
+                    // Llenar historial
+                    updateHistory(transcriptions);
+                    
+                    statusTextEl.textContent = '✅ Conectado - Actualizando en tiempo real';
+                    statusTextEl.className = 'listening';
+                } else {
+                    statusTextEl.textContent = '⏳ Esperando audio...';
+                }
+            } catch (error) {
+                console.error('Error cargando transcripciones:', error);
+                statusTextEl.textContent = '❌ Error de conexión';
+            }
+        }
+
+        // Actualizar lista de historial
+        function updateHistory(transcriptions) {
+            historyListEl.innerHTML = '';
+            
+            transcriptions.forEach(item => {
+                const li = document.createElement('li');
+                li.className = 'history-item';
+                li.innerHTML = `
+                    <div class="history-timestamp">${item.timestamp}</div>
+                    <div class="history-text">${item.text}</div>
+                `;
+                historyListEl.appendChild(li);
+            });
+            
+            // Scroll al final
+            historyListEl.scrollTop = historyListEl.scrollHeight;
+        }
+
+        // Cargar cada 2 segundos
+        loadTranscriptions();
+        setInterval(loadTranscriptions, 2000);
+    </script>
+</body>
+</html>
