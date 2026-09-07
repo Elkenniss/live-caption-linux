@@ -1,39 +1,15 @@
-# ClaseB - Subtitulador en tiempo real
-
-Proyecto prototipo para clase de developer.
-
-## Objetivo
-Capturar el audio de salida del sistema (no el micrófono) y transcribirlo
-a texto en tiempo real usando faster-whisper.
-
-## Estructura
-- src/main.py: punto de entrada del programa.
-- src/audio_capture.py: captura el audio del sistema (PipeWire monitor).
-- src/transcriber.py: convierte el audio capturado a texto.
-- models/: modelos de Whisper descargados.
-- tests/: pruebas individuales de cada módulo.
-- docs/: notas y apuntes del proceso de aprendizaje.
-
-## Cómo levantar el entorno (pendiente, próximo paso)
-python3 -m venv venv
-source venv/bin/activate
-pip install faster-whisper sounddevice numpy
-
-
 # Live Caption Linux
 
-Sistema de transcripción de audio en tiempo real para Linux usando
-faster-whisper, CUDA y Voice Activity Detection (VAD).
+Sistema de **subtítulos / transcripción en tiempo real** para Linux: captura el audio de salida del sistema (PipeWire/PulseAudio), detecta voz con Silero VAD y transcribe con faster-whisper (GPU NVIDIA / CUDA).
 
 ## Características
 
-- Captura continua de audio desde PipeWire/PulseAudio.
-- Detección de voz mediante Silero VAD.
-- Segmentación automática por pausas.
-- Transcripción mediante faster-whisper.
-- Soporte para GPU NVIDIA mediante CUDA.
-- Servidor web local para visualizar las transcripciones.
-- Configuración centralizada mediante `config.py`.
+- Captura continua desde el monitor de audio del sistema (no el micrófono)
+- Detección de voz con Silero VAD y segmentación por pausas
+- Transcripción con faster-whisper
+- Soporte GPU NVIDIA (CUDA)
+- Servidor web local para ver las transcripciones en el navegador
+- Configuración centralizada en `config.py`
 
 ## Arquitectura
 
@@ -46,12 +22,26 @@ Silero VAD
         ↓
 Segmento de voz
         ↓
-transcriber.py
+transcriber.py (faster-whisper)
         ↓
-faster-whisper
-        ↓
-main.py
-        ↓
-server.py
-        ↓
-Navegador
+main.py → server.py → navegador
+```
+
+## Estructura
+
+- `src/main.py` — punto de entrada
+- `src/audio_capture.py` — captura PipeWire monitor
+- `src/transcriber.py` — audio → texto
+- `models/` — modelos Whisper
+- `tests/` — pruebas por módulo
+- `docs/` — notas del proceso
+
+## Entorno
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install faster-whisper sounddevice numpy
+```
+
+> Prototipo en evolución. Pensado para Linux con PipeWire.
