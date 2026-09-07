@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discusiones de la comunidad
+    url: https://github.com/Elkenniss/live-caption-linux/discussions
+    about: Charlar ideas, dudas y rumbo del proyecto sin abrir un bug formal
+  - name: Portafolio / contacto
+    url: https://elkenniss.github.io/portafolio/
+    about: Más sobre Kenny y cómo contactarlo
