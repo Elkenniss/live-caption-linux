@@ -1,0 +1,47 @@
+name: Reportar un bug
+description: Algo no funciona como esperabas
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Qué pasó
+      description: Describe el problema en tus palabras
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Qué esperabas
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: Distro / OS
+      placeholder: p. ej. CachyOS, Ubuntu 24.04
+    validations:
+      required: false
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU (si aplica)
+      placeholder: p. ej. NVIDIA GTX 1660 / sin GPU
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Pasos para reproducir
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Logs / capturas / extra
+    validations:
+      required: false
