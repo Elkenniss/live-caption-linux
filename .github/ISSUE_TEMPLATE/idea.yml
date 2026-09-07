@@ -1,0 +1,32 @@
+name: Idea o sugerencia
+description: Mejora, feature o feedback — no hace falta código
+title: "[idea] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Tu idea
+      description: Qué se te ocurre y por qué ayudaría
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Tipo
+      options:
+        - Feature
+        - UX / usabilidad
+        - Docs
+        - Rendimiento
+        - Soporte Windows / otra plataforma
+        - Otra
+    validations:
+      required: false
+  - type: textarea
+    id: help
+    attributes:
+      label: ¿Te gustaría ayudar a implementarlo?
+      placeholder: Sí / no / tal vez — sin presión
+    validations:
+      required: false
