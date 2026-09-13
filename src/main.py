@@ -1,28 +1,26 @@
 """
 MÓDULO: main.py
+
 PROPÓSITO:
-    Capturar audio continuamente, detectar segmentos de voz,
-    transcribirlos y enviarlos a la página web.
+    Coordinar captura continua, VAD, cola, Whisper y servidor web.
 
 FLUJO:
 
+    PipeWire
+       ↓
     captura continua
-          ↓
-       Silero VAD
-          ↓
-    persona habla
-          ↓
-    persona hace pausa
-          ↓
-      2 segundos
-          ↓
-    cerrar segmento
-          ↓
-      Whisper
-          ↓
-    enviar caption
-          ↓
-    continuar capturando
+       ↓
+    Silero VAD
+       ↓
+    segmento
+       ↓
+    queue
+       ↓
+    Whisper
+       ↓
+    server.py
+       ↓
+    navegador
 """
 
 import sys
@@ -31,10 +29,11 @@ import time
 import requests
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 # ============================================================
-# RUTA DEL PROYECTO
+# RUTA
 # ============================================================
 
 PROJECT_ROOT = os.path.dirname(
@@ -44,31 +43,32 @@ PROJECT_ROOT = os.path.dirname(
 )
 
 if PROJECT_ROOT not in sys.path:
+
     sys.path.insert(
         0,
-        PROJECT_ROOT
+        PROJECT_ROOT,
     )
 
 
 # ============================================================
-# CONFIGURACIÓN
+# CONFIG
 # ============================================================
 
 from config import (
     AUDIO_SAMPLE_RATE,
     AUDIO_CHANNELS,
-    AUDIO_VAD_CHUNK_DURATION,
     VAD_MIN_SILENCE_MS,
     DEBUG,
     WHISPER_MODEL,
     WHISPER_LANGUAGE,
     WHISPER_DEVICE,
     WHISPER_COMPUTE_TYPE,
+    SEGMENT_QUEUE_MAXSIZE,
 )
 
 
 # ============================================================
-# MÓDULOS DEL PROYECTO
+# MÓDULOS
 # ============================================================
 
 from audio_capture import (
@@ -83,35 +83,113 @@ from transcriber import (
 
 
 # ============================================================
-# SERVIDOR WEB
+# SERVIDOR
 # ============================================================
 
-SERVER_URL = (
-    "http://localhost:5000/api/transcribe"
+SERVER_BASE_URL = (
+    "http://localhost:5000"
+)
+
+SERVER_TRANSCRIBE_URL = (
+    f"{SERVER_BASE_URL}/api/transcribe"
+)
+
+SERVER_STATUS_URL = (
+    f"{SERVER_BASE_URL}/api/status"
+)
+
+SERVER_CONTROL_URL = (
+    f"{SERVER_BASE_URL}/api/control"
 )
 
 
 # ============================================================
-# ENVIAR AL SERVIDOR
+# ZONA HORARIA
+# ============================================================
+
+LOCAL_TIMEZONE = ZoneInfo(
+    "America/Managua"
+)
+
+
+def get_local_timestamp():
+    """
+    Devuelve hora local de Nicaragua
+    en formato de 12 horas.
+    """
+
+    now = datetime.now(
+        LOCAL_TIMEZONE
+    )
+
+    return now.strftime(
+        "%I:%M:%S %p"
+    )
+
+
+# ============================================================
+# ENVIAR ESTADO
+# ============================================================
+
+def update_server_status(
+    state,
+    message,
+    segment_id=None,
+    segment_duration=0.0,
+    queue_size=0,
+):
+
+    try:
+
+        requests.post(
+            SERVER_STATUS_URL,
+            json={
+                "state": state,
+                "message": message,
+                "segment_id": segment_id,
+                "segment_duration": round(
+                    segment_duration,
+                    2,
+                ),
+                "queue_size": queue_size,
+                "queue_max": SEGMENT_QUEUE_MAXSIZE,
+                "updated_at": get_local_timestamp(),
+            },
+            timeout=0.5,
+        )
+
+    except requests.RequestException:
+
+        # El servidor web puede estar apagado.
+        # No debemos detener el transcriptor por esto.
+        pass
+
+
+# ============================================================
+# ENVIAR TRANSCRIPCIÓN
 # ============================================================
 
 def send_to_server(
     text,
     timestamp,
+    duration,
+    segment_id,
 ):
-    """
-    Envía un caption completo al servidor web.
-    """
 
     try:
 
         response = requests.post(
 
-            SERVER_URL,
+            SERVER_TRANSCRIBE_URL,
 
             json={
                 "text": text,
                 "timestamp": timestamp,
+                "duration": round(
+                    duration,
+                    2,
+                ),
+                "segment_id": segment_id,
             },
 
             timeout=2,
@@ -120,17 +198,100 @@ def send_to_server(
         if response.status_code != 200:
 
             print(
-                "⚠️ Error enviando al "
-                f"servidor: "
+                "⚠️ Error enviando "
+                f"al servidor: "
                 f"{response.status_code}"
             )
 
-    except requests.exceptions.RequestException as error:
+    except requests.RequestException as error:
 
         print(
             "⚠️ No se pudo conectar "
             f"al servidor web: {error}"
         )
+
+
+# ============================================================
+# LEER CONTROLES DEL NAVEGADOR
+# ============================================================
+
+def read_controls():
+
+    try:
+
+        response = requests.get(
+            SERVER_CONTROL_URL,
+            timeout=0.3,
+        )
+
+        if response.status_code != 200:
+            return None
+
+        return response.json()
+
+    except requests.RequestException:
+
+        return None
+
+
+# ============================================================
+# APLICAR CONTROLES
+# ============================================================
+
+def handle_controls(
+    capturer,
+):
+
+    controls = read_controls()
+
+    if not controls:
+        return
+
+    # --------------------------------------------------------
+    # PAUSA
+    # --------------------------------------------------------
+
+    if controls.get(
+        "paused",
+        False,
+    ):
+
+        if not capturer.is_paused():
+
+            capturer.pause()
+
+            update_server_status(
+                "paused",
+                "Escucha pausada por el usuario.",
+                queue_size=(
+                    capturer.get_queue_size()
+                ),
+            )
+
+    else:
+
+        if capturer.is_paused():
+
+            capturer.resume()
+
+            update_server_status(
+                "listening",
+                "Escuchando nuevamente.",
+                queue_size=(
+                    capturer.get_queue_size()
+                ),
+            )
+
+    # --------------------------------------------------------
+    # CORTE MANUAL
+    # --------------------------------------------------------
+
+    if controls.get(
+        "force_cut",
+        False,
+    ):
+
+        capturer.force_cut()
 
 
 # ============================================================
@@ -141,8 +302,7 @@ def main():
 
     print("=" * 80)
     print(
-        "TRANSCRIPTOR DE AUDIO "
-        "EN TIEMPO REAL"
+        "TRANSCRIPTOR DE AUDIO EN TIEMPO REAL"
     )
     print("=" * 80)
 
@@ -157,12 +317,7 @@ def main():
     )
 
     print(
-        f"Análisis VAD cada: "
-        f"{AUDIO_VAD_CHUNK_DURATION} s"
-    )
-
-    print(
-        f"Silencio para cerrar segmento: "
+        f"Silencio para cerrar: "
         f"{VAD_MIN_SILENCE_MS} ms"
     )
 
@@ -203,7 +358,7 @@ def main():
 
 
     # ========================================================
-    # CARGAR WHISPER
+    # MODELO
     # ========================================================
 
     print(
@@ -235,61 +390,147 @@ def main():
 
 
     print(
-        "Modelo cargado."
-    )
-
-    print(
-        "Iniciando captura continua...\n"
+        "Modelo cargado correctamente."
     )
 
 
     # ========================================================
-    # INICIAR CAPTURADOR
+    # CAPTURADOR
     # ========================================================
 
-    capturer = (
-        SpeechSegmentCapture()
-    )
+    capturer = SpeechSegmentCapture()
 
     capturer.start()
 
 
     # ========================================================
-    # PROCESAMIENTO
+    # ESTADO INICIAL
+    # ========================================================
+
+    update_server_status(
+        "listening",
+        "Escuchando...",
+        queue_size=(
+            capturer.get_queue_size()
+        ),
+    )
+
+
+    segment_id = 0
+
+
+    # ========================================================
+    # LOOP
     # ========================================================
 
     try:
 
-        segment_count = 0
-
         while True:
 
-            # Esperar siguiente segmento.
+            # ------------------------------------------------
+            # CONTROLES DEL NAVEGADOR
+            # ------------------------------------------------
+
+            handle_controls(
+                capturer
+            )
+
+
+            # ------------------------------------------------
+            # LEER SIGUIENTE SEGMENTO
+            # ------------------------------------------------
+
             audio = capturer.get_segment(
-                timeout=1
+                timeout=0.2
             )
 
             if audio is None:
+
+                if capturer.is_paused():
+
+                    update_server_status(
+                        "paused",
+                        "Escucha pausada.",
+                        queue_size=(
+                            capturer.get_queue_size()
+                        ),
+                    )
+
+                elif capturer.is_speech_active():
+
+                    update_server_status(
+                        "listening",
+                        "Voz detectada.",
+                        segment_duration=(
+                            capturer.get_current_duration()
+                        ),
+                        queue_size=(
+                            capturer.get_queue_size()
+                        ),
+                    )
+
+                else:
+
+                    update_server_status(
+                        "listening",
+                        "Escuchando...",
+                        queue_size=(
+                            capturer.get_queue_size()
+                        ),
+                    )
+
                 continue
 
 
-            segment_count += 1
+            # ------------------------------------------------
+            # NUEVO SEGMENTO
+            # ------------------------------------------------
 
+            segment_id += 1
+
+            duration = (
+                len(audio)
+                / AUDIO_SAMPLE_RATE
+            )
+
+            timestamp = get_local_timestamp()
+
+
+            print()
             print(
-                "\n"
-                + "=" * 80
+                "=" * 80
             )
 
             print(
-                f"SEGMENTO #{segment_count}"
+                f"SEGMENTO #{segment_id}"
             )
 
             print(
-                "Procesando bloque completo..."
+                f"Hora: {timestamp}"
+            )
+
+            print(
+                f"Duración: "
+                f"{duration:.2f} segundos"
             )
 
             print(
                 "=" * 80
+            )
+
+
+            # ------------------------------------------------
+            # ESTADO: TRANSCRIBIENDO
+            # ------------------------------------------------
+
+            update_server_status(
+                "transcribing",
+                "Whisper está transcribiendo...",
+                segment_id=segment_id,
+                segment_duration=duration,
+                queue_size=(
+                    capturer.get_queue_size()
+                ),
             )
 
 
@@ -308,7 +549,7 @@ def main():
                 # TRANSCRIBIR
                 # ------------------------------------------------
 
-                texto = transcribe_audio(
+                text = transcribe_audio(
                     model,
                     wav_file,
                 )
@@ -318,39 +559,51 @@ def main():
                 # RESULTADO
                 # ------------------------------------------------
 
-                if texto:
+                if text:
 
-                    timestamp = (
-                        datetime.now()
-                        .strftime("%H:%M:%S")
-                    )
-
+                    print()
                     print(
-                        f"\n[{timestamp}]"
+                        f"[{timestamp}] "
+                        f"{text}"
                     )
 
-                    print(
-                        texto
-                    )
 
                     send_to_server(
-                        texto,
-                        timestamp,
+                        text=text,
+                        timestamp=timestamp,
+                        duration=duration,
+                        segment_id=segment_id,
+                    )
+
+
+                    # --------------------------------------------
+                    # LISTO / VOLVER A ESCUCHAR
+                    # --------------------------------------------
+
+                    update_server_status(
+                        "listening",
+                        "Escuchando...",
+                        queue_size=(
+                            capturer.get_queue_size()
+                        ),
                     )
 
                 else:
 
                     print(
-                        "⚠️ No se obtuvo "
-                        "texto del segmento."
+                        "⚠️ Segmento sin texto."
+                    )
+
+                    update_server_status(
+                        "listening",
+                        "Escuchando...",
+                        queue_size=(
+                            capturer.get_queue_size()
+                        ),
                     )
 
 
             finally:
-
-                # ------------------------------------------------
-                # BORRAR WAV TEMPORAL
-                # ------------------------------------------------
 
                 if os.path.exists(
                     wav_file
@@ -375,6 +628,14 @@ def main():
             f"\n❌ Error: {error}"
         )
 
+        update_server_status(
+            "error",
+            str(error),
+            queue_size=(
+                capturer.get_queue_size()
+            ),
+        )
+
         if DEBUG:
 
             import traceback
@@ -392,4 +653,5 @@ def main():
 # ============================================================
 
 if __name__ == "__main__":
+
     main()

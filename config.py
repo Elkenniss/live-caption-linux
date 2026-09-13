@@ -330,3 +330,22 @@ WHISPER_NO_SPEECH_THRESHOLD = 0.6
 #
 
 DEBUG = True
+
+
+# ============================================================
+# CONTROLES DEL LIVE CAPTION
+# ============================================================
+
+# Estado inicial de la captura.
+AUDIO_CAPTURE_ENABLED = True
+
+# Cada cuánto tiempo main.py consulta al servidor
+# para comprobar si el usuario pulsó un botón.
+CONTROL_POLL_INTERVAL = 0.1
+
+# Número máximo de segmentos que pueden esperar
+# para ser procesados por Whisper.
+#
+# Una cola de 30 es un margen bastante amplio para
+# una conversación normal.
+SEGMENT_QUEUE_MAXSIZE = 30

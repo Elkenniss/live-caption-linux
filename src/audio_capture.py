@@ -1,35 +1,47 @@
 """
 MÓDULO: audio_capture.py
+
 PROPÓSITO:
-    Capturar audio continuamente desde PipeWire/PulseAudio y
-    crear segmentos de voz automáticamente usando Silero VAD.
+    Capturar audio continuamente desde PipeWire/PulseAudio,
+    detectar segmentos de voz mediante Silero VAD y permitir
+    control manual desde la interfaz web.
 
 FUNCIONAMIENTO:
 
     Audio continuo
           ↓
-    pequeños bloques
-          ↓
        Silero VAD
           ↓
-      ¿hay voz?
-       /     \
-     NO       SÍ
-              ↓
-       comenzar segmento
-              ↓
+    ¿hay voz?
+      /       \
+    NO         SÍ
+               ↓
+        comenzar segmento
+               ↓
         seguir acumulando
-              ↓
-       2 segundos sin voz
-              ↓
+               ↓
+      silencio de 2 segundos
+               ↓
         cerrar segmento
-              ↓
-        enviar a la cola
-              ↓
+               ↓
+          QUEUE
+               ↓
           Whisper
 
-VENTAJA:
-La captura continúa mientras Whisper procesa otro segmento.
+CONTROLES MANUALES:
+
+    force_cut()
+        Cierra inmediatamente el segmento actual.
+
+    pause()
+        Ignora nueva voz hasta que se solicite resume().
+
+    resume()
+        Reanuda la detección de voz.
+
+IMPORTANTE:
+    "Pausar" no mata parec.
+    El proceso de audio continúa abierto para evitar huecos.
 """
 
 import os
@@ -44,7 +56,7 @@ import numpy as np
 
 
 # ============================================================
-# CONFIGURACIÓN DEL PROYECTO
+# RUTA DEL PROYECTO
 # ============================================================
 
 PROJECT_DIR = os.path.dirname(
@@ -56,6 +68,10 @@ PROJECT_DIR = os.path.dirname(
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
 
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
 
 from config import (
     AUDIO_DEVICE,
@@ -69,11 +85,12 @@ from config import (
     VAD_SPEECH_PAD_MS,
     AUDIO_PRE_ROLL_MS,
     AUDIO_MAX_SPEECH_SEGMENT_SECONDS,
+    SEGMENT_QUEUE_MAXSIZE,
 )
 
 
 # ============================================================
-# SILERO VAD DE FASTER-WHISPER
+# SILERO VAD
 # ============================================================
 
 from faster_whisper.vad import (
@@ -83,13 +100,10 @@ from faster_whisper.vad import (
 
 
 # ============================================================
-# UTILIDADES
+# CONSTANTES
 # ============================================================
 
-BYTES_PER_SAMPLE = 2  # int16
-PRE_ROLL_SAMPLES = int(
-    AUDIO_SAMPLE_RATE * AUDIO_PRE_ROLL_MS / 1000
-)
+BYTES_PER_SAMPLE = 2
 
 CHUNK_SAMPLES = max(
     512,
@@ -109,38 +123,70 @@ CHUNK_BYTES = (
     * BYTES_PER_SAMPLE
 )
 
+PRE_ROLL_SAMPLES = int(
+    AUDIO_SAMPLE_RATE
+    * AUDIO_PRE_ROLL_MS
+    / 1000
+)
+
+
+# ============================================================
+# CAPTURA CONTINUA
+# ============================================================
 
 class SpeechSegmentCapture:
     """
-    Capturador continuo de audio con detección automática de voz.
+    Capturador continuo con Silero VAD.
 
-    La captura ocurre en un hilo independiente para que
-    Whisper pueda procesar segmentos sin detener la captura.
+    Permite:
+        - captura continua
+        - detección automática de segmentos
+        - corte manual
+        - pausa manual
+        - reanudación
+        - cola de segmentos
     """
 
     def __init__(self):
+
         self.process = None
         self.thread = None
 
         self.stop_event = threading.Event()
 
-        # Cola donde se depositan los segmentos terminados.
-        self.segment_queue = queue.Queue(maxsize=5)
+        # Control manual.
+        self.pause_event = threading.Event()
+        self.force_cut_event = threading.Event()
+
+        # Estado actual.
+        self.speech_active = False
+        self.current_segment_duration = 0.0
+
+        # Lock para estados compartidos.
+        self.state_lock = threading.Lock()
+
+        # Cola de segmentos.
+        self.segment_queue = queue.Queue(
+            maxsize=SEGMENT_QUEUE_MAXSIZE
+        )
 
     # ========================================================
     # INICIAR
     # ========================================================
 
     def start(self):
-        """
-        Inicia parec y el hilo de captura.
-        """
 
-        if self.thread and self.thread.is_alive():
+        if (
+            self.thread
+            and self.thread.is_alive()
+        ):
             return
 
         print(
-            f"🎤 Iniciando captura continua desde:\n"
+            "🎤 Iniciando captura continua desde:"
+        )
+
+        print(
             f"   {AUDIO_DEVICE}"
         )
 
@@ -163,9 +209,11 @@ class SpeechSegmentCapture:
             )
 
         except FileNotFoundError as error:
+
             raise RuntimeError(
                 "No se encontró 'parec'. "
-                "Verifica que PulseAudio/PipeWire esté instalado."
+                "Verifica que PulseAudio/PipeWire "
+                "esté instalado."
             ) from error
 
         self.thread = threading.Thread(
@@ -176,42 +224,121 @@ class SpeechSegmentCapture:
         self.thread.start()
 
     # ========================================================
+    # ESTADO
+    # ========================================================
+
+    def is_paused(self):
+        return self.pause_event.is_set()
+
+    def is_speech_active(self):
+
+        with self.state_lock:
+            return self.speech_active
+
+    def get_current_duration(self):
+
+        with self.state_lock:
+            return self.current_segment_duration
+
+    def get_queue_size(self):
+
+        return self.segment_queue.qsize()
+
+    # ========================================================
+    # PAUSAR
+    # ========================================================
+
+    def pause(self):
+        """
+        Pausa la detección de nuevos segmentos.
+
+        parec sigue abierto.
+        """
+
+        self.pause_event.set()
+
+        with self.state_lock:
+
+            self.speech_active = False
+            self.current_segment_duration = 0.0
+
+        print(
+            "🔵 Captura pausada por el usuario."
+        )
+
+    # ========================================================
+    # REANUDAR
+    # ========================================================
+
+    def resume(self):
+        """
+        Reanuda la detección de voz.
+
+        Se limpia cualquier segmento parcialmente acumulado.
+        """
+
+        self.force_cut_event.clear()
+
+        self.pause_event.clear()
+
+        with self.state_lock:
+
+            self.speech_active = False
+            self.current_segment_duration = 0.0
+
+        print(
+            "🟢 Captura reanudada."
+        )
+
+    # ========================================================
+    # CORTE MANUAL
+    # ========================================================
+
+    def force_cut(self):
+        """
+        Solicita que el segmento actual termine inmediatamente.
+        """
+
+        self.force_cut_event.set()
+
+        print(
+            "🔴 Solicitud de corte manual recibida."
+        )
+
+    # ========================================================
     # BUCLE DE CAPTURA
     # ========================================================
 
     def _capture_loop(self):
-        """
-        Captura continuamente desde parec.
-        """
-
-        audio_buffer = np.array(
-            [],
-            dtype=np.float32,
-        )
 
         pre_roll_buffer = np.array(
             [],
             dtype=np.float32,
         )
 
-        speech_active = False
-
         segment_buffer = np.array(
             [],
             dtype=np.float32,
         )
+
+        speech_active = False
 
         max_segment_samples = int(
             AUDIO_SAMPLE_RATE
             * AUDIO_MAX_SPEECH_SEGMENT_SECONDS
         )
 
-        # Configuración VAD
         vad_options = VadOptions(
             threshold=VAD_THRESHOLD,
-            min_speech_duration_ms=VAD_MIN_SPEECH_DURATION_MS,
-            min_silence_duration_ms=VAD_MIN_SILENCE_MS,
-            speech_pad_ms=VAD_SPEECH_PAD_MS,
+            min_speech_duration_ms=(
+                VAD_MIN_SPEECH_DURATION_MS
+            ),
+            min_silence_duration_ms=(
+                VAD_MIN_SILENCE_MS
+            ),
+            speech_pad_ms=(
+                VAD_SPEECH_PAD_MS
+            ),
         )
 
         print(
@@ -220,17 +347,24 @@ class SpeechSegmentCapture:
 
         while not self.stop_event.is_set():
 
-            # ------------------------------------------------
+            # =================================================
             # LEER AUDIO
-            # ------------------------------------------------
+            # =================================================
 
             try:
 
-                raw_data = self.process.stdout.read(
-                    CHUNK_BYTES
+                raw_data = (
+                    self.process.stdout.read(
+                        CHUNK_BYTES
+                    )
                 )
 
-            except Exception:
+            except Exception as error:
+
+                print(
+                    f"⚠️ Error leyendo audio: {error}"
+                )
+
                 break
 
             if not raw_data:
@@ -244,36 +378,112 @@ class SpeechSegmentCapture:
             if audio_int16.size == 0:
                 continue
 
-            # Convertir int16 → float32 [-1, 1]
             audio_float = (
-                audio_int16.astype(np.float32)
+                audio_int16.astype(
+                    np.float32
+                )
                 / 32768.0
             )
 
-            audio_buffer = np.concatenate(
-                (audio_buffer, audio_float)
-            )
+            # =================================================
+            # PAUSA MANUAL
+            # =================================================
 
-            # ------------------------------------------------
-            # MODO SIN VAD
-            # ------------------------------------------------
+            if self.pause_event.is_set():
 
-            if not AUDIO_VAD_ENABLED:
+                # No acumulamos absolutamente nada.
+                speech_active = False
 
-                self._put_segment(
-                    audio_buffer.copy()
-                )
-
-                audio_buffer = np.array(
+                segment_buffer = np.array(
                     [],
                     dtype=np.float32,
                 )
 
+                pre_roll_buffer = np.array(
+                    [],
+                    dtype=np.float32,
+                )
+
+                with self.state_lock:
+
+                    self.speech_active = False
+                    self.current_segment_duration = 0.0
+
                 continue
 
-            # ------------------------------------------------
-            # MANTENER PRE-ROLL
-            # ------------------------------------------------
+            # =================================================
+            # CORTE MANUAL
+            # =================================================
+
+            if self.force_cut_event.is_set():
+
+                if (
+                    speech_active
+                    and len(segment_buffer) > 0
+                ):
+
+                    print(
+                        "🔴 Segmento cerrado "
+                        "manualmente."
+                    )
+
+                    self._finish_segment(
+                        segment_buffer
+                    )
+
+                segment_buffer = np.array(
+                    [],
+                    dtype=np.float32,
+                )
+
+                pre_roll_buffer = np.array(
+                    [],
+                    dtype=np.float32,
+                )
+
+                speech_active = False
+
+                self.force_cut_event.clear()
+
+                with self.state_lock:
+
+                    self.speech_active = False
+                    self.current_segment_duration = 0.0
+
+                continue
+
+            # =================================================
+            # SI NO HAY VAD
+            # =================================================
+
+            if not AUDIO_VAD_ENABLED:
+
+                segment_buffer = np.concatenate(
+                    (
+                        segment_buffer,
+                        audio_float,
+                    )
+                )
+
+                if (
+                    len(segment_buffer)
+                    >= max_segment_samples
+                ):
+
+                    self._finish_segment(
+                        segment_buffer
+                    )
+
+                    segment_buffer = np.array(
+                        [],
+                        dtype=np.float32,
+                    )
+
+                continue
+
+            # =================================================
+            # TODAVÍA NO HAY VOZ
+            # =================================================
 
             if not speech_active:
 
@@ -288,21 +498,18 @@ class SpeechSegmentCapture:
                     len(pre_roll_buffer)
                     > PRE_ROLL_SAMPLES
                 ):
+
                     pre_roll_buffer = (
                         pre_roll_buffer[
                             -PRE_ROLL_SAMPLES:
                         ]
                     )
 
-                # Solo analizamos el buffer corto
-                # para detectar el inicio de voz.
-                analysis_audio = pre_roll_buffer
-
-                if len(analysis_audio) < 512:
+                if len(pre_roll_buffer) < 512:
                     continue
 
                 speech = get_speech_timestamps(
-                    analysis_audio,
+                    pre_roll_buffer,
                     vad_options,
                     sampling_rate=AUDIO_SAMPLE_RATE,
                 )
@@ -311,16 +518,8 @@ class SpeechSegmentCapture:
 
                     speech_active = True
 
-                    # Comenzar segmento incluyendo
-                    # el pequeño pre-roll.
                     segment_buffer = (
                         pre_roll_buffer.copy()
-                    )
-
-                    # Limpiar audio acumulado general.
-                    audio_buffer = np.array(
-                        [],
-                        dtype=np.float32,
                     )
 
                     print(
@@ -328,11 +527,20 @@ class SpeechSegmentCapture:
                         "Comenzando segmento..."
                     )
 
+                with self.state_lock:
+
+                    self.speech_active = speech_active
+
+                    self.current_segment_duration = (
+                        len(segment_buffer)
+                        / AUDIO_SAMPLE_RATE
+                    )
+
                 continue
 
-            # ------------------------------------------------
-            # YA ESTAMOS DENTRO DE UN SEGMENTO
-            # ------------------------------------------------
+            # =================================================
+            # ESTAMOS GRABANDO UN SEGMENTO
+            # =================================================
 
             segment_buffer = np.concatenate(
                 (
@@ -341,9 +549,21 @@ class SpeechSegmentCapture:
                 )
             )
 
-            # ------------------------------------------------
-            # SEGURIDAD: SEGMENTO MUY LARGO
-            # ------------------------------------------------
+            current_duration = (
+                len(segment_buffer)
+                / AUDIO_SAMPLE_RATE
+            )
+
+            with self.state_lock:
+
+                self.speech_active = True
+                self.current_segment_duration = (
+                    current_duration
+                )
+
+            # =================================================
+            # LÍMITE DE SEGURIDAD
+            # =================================================
 
             if (
                 len(segment_buffer)
@@ -351,8 +571,10 @@ class SpeechSegmentCapture:
             ):
 
                 print(
-                    "⚠️ Segmento alcanzó el límite "
-                    f"de {AUDIO_MAX_SPEECH_SEGMENT_SECONDS} s."
+                    "⚠️ Segmento alcanzó el "
+                    f"límite de "
+                    f"{AUDIO_MAX_SPEECH_SEGMENT_SECONDS} "
+                    "segundos."
                 )
 
                 self._finish_segment(
@@ -371,38 +593,38 @@ class SpeechSegmentCapture:
 
                 speech_active = False
 
+                with self.state_lock:
+
+                    self.speech_active = False
+                    self.current_segment_duration = 0.0
+
                 continue
 
-            # ------------------------------------------------
-            # VENTANA DE ANÁLISIS
-            # ------------------------------------------------
-            #
-            # Para saber si llevamos ~2 segundos sin voz,
-            # no necesitamos analizar todo el segmento.
-            #
-            # Solo observamos una ventana reciente.
-            #
+            # =================================================
+            # ANALIZAR SILENCIO
+            # =================================================
 
-            vad_window_seconds = max(
+            analysis_window_seconds = max(
                 4.0,
-                (VAD_MIN_SILENCE_MS / 1000.0) + 1.0,
+                (
+                    VAD_MIN_SILENCE_MS
+                    / 1000.0
+                ) + 1.0,
             )
 
-            vad_window_samples = int(
+            analysis_window_samples = int(
                 AUDIO_SAMPLE_RATE
-                * vad_window_seconds
+                * analysis_window_seconds
             )
 
-            analysis_audio = segment_buffer[
-                -vad_window_samples:
-            ]
+            analysis_audio = (
+                segment_buffer[
+                    -analysis_window_samples:
+                ]
+            )
 
             if len(analysis_audio) < 512:
                 continue
-
-            # ------------------------------------------------
-            # EJECUTAR VAD
-            # ------------------------------------------------
 
             speech = get_speech_timestamps(
                 analysis_audio,
@@ -410,17 +632,13 @@ class SpeechSegmentCapture:
                 sampling_rate=AUDIO_SAMPLE_RATE,
             )
 
-            # ------------------------------------------------
-            # COMPROBAR SILENCIO
-            # ------------------------------------------------
+            # =================================================
+            # VOZ DETECTADA
+            # =================================================
 
             if speech:
 
-                last_speech = speech[-1]
-
-                last_speech_end = last_speech[
-                    "end"
-                ]
+                last_speech_end = speech[-1]["end"]
 
                 silence_samples = (
                     len(analysis_audio)
@@ -433,7 +651,14 @@ class SpeechSegmentCapture:
                     * 1000
                 )
 
-                if silence_ms >= VAD_MIN_SILENCE_MS:
+                # =================================================
+                # FIN AUTOMÁTICO
+                # =================================================
+
+                if (
+                    silence_ms
+                    >= VAD_MIN_SILENCE_MS
+                ):
 
                     print(
                         f"🔇 {silence_ms:.0f} ms "
@@ -456,25 +681,31 @@ class SpeechSegmentCapture:
 
                     speech_active = False
 
+                    with self.state_lock:
+
+                        self.speech_active = False
+                        self.current_segment_duration = 0.0
+
+            # =================================================
+            # NO HAY VOZ
+            # =================================================
+
             else:
 
-                # No hay voz en la ventana reciente.
-                #
-                # Si el segmento ya tiene suficiente duración,
-                # consideramos que terminó.
+                silence_duration = (
+                    len(analysis_audio)
+                    / AUDIO_SAMPLE_RATE
+                    * 1000
+                )
 
                 if (
-                    len(segment_buffer)
-                    >= (
-                        AUDIO_SAMPLE_RATE
-                        * VAD_MIN_SILENCE_MS
-                        / 1000
-                    )
+                    silence_duration
+                    >= VAD_MIN_SILENCE_MS
                 ):
 
                     print(
-                        "🔇 Segmento terminado "
-                        "por ausencia de voz."
+                        "🔇 No se detectó voz. "
+                        "Finalizando segmento."
                     )
 
                     self._finish_segment(
@@ -493,14 +724,20 @@ class SpeechSegmentCapture:
 
                     speech_active = False
 
-        # ----------------------------------------------------
-        # FINAL DEL HILO
-        # ----------------------------------------------------
+                    with self.state_lock:
+
+                        self.speech_active = False
+                        self.current_segment_duration = 0.0
+
+        # =====================================================
+        # CERRAR SEGMENTO PENDIENTE
+        # =====================================================
 
         if (
             speech_active
             and len(segment_buffer) > 0
         ):
+
             self._finish_segment(
                 segment_buffer
             )
@@ -509,10 +746,10 @@ class SpeechSegmentCapture:
     # FINALIZAR SEGMENTO
     # ========================================================
 
-    def _finish_segment(self, audio):
-        """
-        Limpia silencios extremos y añade el segmento a la cola.
-        """
+    def _finish_segment(
+        self,
+        audio,
+    ):
 
         if audio is None:
             return
@@ -520,15 +757,19 @@ class SpeechSegmentCapture:
         if len(audio) == 0:
             return
 
-        # Ejecutar VAD una última vez para localizar
-        # exactamente la zona de voz.
         try:
 
             final_options = VadOptions(
                 threshold=VAD_THRESHOLD,
-                min_speech_duration_ms=VAD_MIN_SPEECH_DURATION_MS,
-                min_silence_duration_ms=VAD_MIN_SILENCE_MS,
-                speech_pad_ms=VAD_SPEECH_PAD_MS,
+                min_speech_duration_ms=(
+                    VAD_MIN_SPEECH_DURATION_MS
+                ),
+                min_silence_duration_ms=(
+                    VAD_MIN_SILENCE_MS
+                ),
+                speech_pad_ms=(
+                    VAD_SPEECH_PAD_MS
+                ),
             )
 
             speech = get_speech_timestamps(
@@ -540,23 +781,25 @@ class SpeechSegmentCapture:
         except Exception as error:
 
             print(
-                f"⚠️ Error ejecutando VAD final: {error}"
+                f"⚠️ Error durante VAD final: "
+                f"{error}"
             )
 
             speech = []
 
+        # =====================================================
+        # RECORTAR SILENCIO
+        # =====================================================
+
         if speech:
 
             start = speech[0]["start"]
+
             end = speech[-1]["end"]
 
             audio = audio[start:end]
 
-        # Evitar mandar segmentos diminutos.
         minimum_samples = int(
-            AUDIO_SAMPLE_RATE
-            * VAD_MIN_SPEECH_DURATION_MS()
-        ) if False else int(
             AUDIO_SAMPLE_RATE
             * VAD_MIN_SPEECH_DURATION_MS
             / 1000
@@ -580,13 +823,13 @@ class SpeechSegmentCapture:
         )
 
     # ========================================================
-    # PONER EN COLA
+    # AÑADIR A COLA
     # ========================================================
 
-    def _put_segment(self, audio):
-        """
-        Añade un segmento a la cola.
-        """
+    def _put_segment(
+        self,
+        audio,
+    ):
 
         while not self.stop_event.is_set():
 
@@ -601,19 +844,19 @@ class SpeechSegmentCapture:
 
             except queue.Full:
 
-                continue
+                print(
+                    "⚠️ Cola de segmentos llena. "
+                    "Esperando espacio..."
+                )
 
     # ========================================================
     # OBTENER SEGMENTO
     # ========================================================
 
-    def get_segment(self, timeout=None):
-        """
-        Obtiene el siguiente segmento de voz.
-
-        Retorna:
-            numpy.ndarray
-        """
+    def get_segment(
+        self,
+        timeout=None,
+    ):
 
         try:
 
@@ -630,9 +873,6 @@ class SpeechSegmentCapture:
     # ========================================================
 
     def stop(self):
-        """
-        Detiene captura y libera parec.
-        """
 
         print(
             "\n🛑 Deteniendo captura..."
@@ -663,9 +903,12 @@ class SpeechSegmentCapture:
 # GUARDAR WAV
 # ============================================================
 
-def save_wav(audio_array, filename=None):
+def save_wav(
+    audio_array,
+    filename=None,
+):
     """
-    Guarda un arreglo numpy como archivo WAV.
+    Guarda audio float32 [-1,1] como WAV int16.
     """
 
     if filename is None:
@@ -711,17 +954,17 @@ def save_wav(audio_array, filename=None):
 
     return filename
 
+
 # ============================================================
-# PRUEBA DIRECTA DEL MÓDULO
+# PRUEBA DIRECTA
 # ============================================================
 
 def main():
-    """
-    Permite probar únicamente la captura.
-    """
 
     print("=" * 80)
-    print("CAPTURADOR CONTINUO + SILERO VAD")
+    print(
+        "CAPTURADOR CONTINUO + SILERO VAD"
+    )
     print("=" * 80)
 
     print(
@@ -729,20 +972,28 @@ def main():
     )
 
     print(
-        f"Sample rate: {AUDIO_SAMPLE_RATE} Hz"
+        f"Sample rate: "
+        f"{AUDIO_SAMPLE_RATE} Hz"
     )
 
     print(
-        f"Chunk VAD: {AUDIO_VAD_CHUNK_DURATION} s"
+        f"Chunk VAD: "
+        f"{AUDIO_VAD_CHUNK_DURATION} s"
     )
 
     print(
-        f"Umbral VAD: {VAD_THRESHOLD}"
+        f"Umbral VAD: "
+        f"{VAD_THRESHOLD}"
     )
 
     print(
-        f"Silencio para cortar: "
+        f"Silencio para terminar: "
         f"{VAD_MIN_SILENCE_MS} ms"
+    )
+
+    print(
+        f"Cola máxima: "
+        f"{SEGMENT_QUEUE_MAXSIZE}"
     )
 
     print("=" * 80)
@@ -753,7 +1004,7 @@ def main():
 
     try:
 
-        count = 0
+        segment_count = 0
 
         while True:
 
@@ -764,14 +1015,19 @@ def main():
             if audio is None:
                 continue
 
-            count += 1
+            segment_count += 1
 
             print(
-                f"\n--- SEGMENTO #{count} ---"
+                "\n"
+                + "=" * 60
             )
 
-            filename = save_wav(
-                audio
+            print(
+                f"SEGMENTO #{segment_count}"
+            )
+
+            print(
+                "=" * 60
             )
 
             duration = (
@@ -780,17 +1036,23 @@ def main():
             )
 
             print(
-                f"Duración: {duration:.2f} s"
+                f"Duración: "
+                f"{duration:.2f} segundos"
+            )
+
+            filename = save_wav(
+                audio
             )
 
             print(
-                f"WAV: {filename}"
+                f"Archivo WAV: "
+                f"{filename}"
             )
 
     except KeyboardInterrupt:
 
         print(
-            "\nPrueba detenida."
+            "\nCaptura detenida."
         )
 
     finally:

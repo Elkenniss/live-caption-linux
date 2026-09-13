@@ -1,219 +1,1426 @@
- 
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transcriptor en Tiempo Real</title>
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Live Caption</title>
+
     <style>
+
         * {
+            box-sizing: border-box;
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
         }
+
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+            font-family:
+                "Segoe UI",
+                Roboto,
+                Arial,
+                sans-serif;
+
+            background:
+                #0f172a;
+
             min-height: 100vh;
-            padding: 20px;
+
+            color: #e5e7eb;
         }
 
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-        }
 
-        h1 {
-            color: white;
-            text-align: center;
-            margin-bottom: 30px;
-            font-size: 2.5em;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        }
+        .app {
 
-        .subtitle-box {
-            background: rgba(0, 0, 0, 0.85);
-            border-radius: 15px;
-            padding: 40px;
-            margin-bottom: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
-        }
+            width: min(
+                100%,
+                1000px
+            );
 
-        .current-subtitle {
-            color: #fff;
-            font-size: 2em;
-            text-align: center;
-            min-height: 80px;
+            margin: auto;
+
+            min-height: 100vh;
+
             display: flex;
+
+            flex-direction: column;
+        }
+
+
+        /* ==================================================
+           HEADER
+        ================================================== */
+
+        .header {
+
+            position: sticky;
+
+            top: 0;
+
+            z-index: 10;
+
+            background:
+                #111827;
+
+            border-bottom:
+                1px solid #263244;
+
+            padding:
+                16px 20px;
+        }
+
+
+        .header-top {
+
+            display: flex;
+
+            justify-content:
+                space-between;
+
             align-items: center;
-            justify-content: center;
-            line-height: 1.4;
-            animation: fadeIn 0.3s ease-in;
+
+            gap: 15px;
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+
+        .title {
+
+            font-size: 1.35rem;
+
+            font-weight: 700;
+
+            color: white;
         }
 
-        .history-box {
-            background: white;
-            border-radius: 15px;
-            padding: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-        }
-
-        .history-title {
-            color: #667eea;
-            font-size: 1.5em;
-            margin-bottom: 20px;
-            border-bottom: 3px solid #667eea;
-            padding-bottom: 10px;
-        }
-
-        .history-list {
-            list-style: none;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .history-item {
-            padding: 12px 15px;
-            margin-bottom: 10px;
-            background: #f8f9fa;
-            border-radius: 8px;
-            border-left: 4px solid #667eea;
-            animation: slideIn 0.3s ease-out;
-        }
-
-        @keyframes slideIn {
-            from { opacity: 0; transform: translateX(-20px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-
-        .history-timestamp {
-            color: #667eea;
-            font-weight: bold;
-            font-size: 0.9em;
-            margin-bottom: 5px;
-        }
-
-        .history-text {
-            color: #333;
-            font-size: 1.1em;
-            line-height: 1.5;
-        }
 
         .status {
-            text-align: center;
-            color: white;
-            margin-top: 20px;
-            font-size: 0.9em;
-            opacity: 0.8;
+
+            display: flex;
+
+            align-items: center;
+
+            gap: 8px;
+
+            font-size: 0.9rem;
+
+            font-weight: 600;
         }
 
-        .listening {
-            color: #4ade80;
-            font-weight: bold;
+
+        .status-dot {
+
+            width: 11px;
+
+            height: 11px;
+
+            border-radius: 50%;
+
+            background: #22c55e;
+
+            box-shadow:
+                0 0 10px
+                rgba(
+                    34,
+                    197,
+                    94,
+                    0.6
+                );
         }
 
-        /* Scrollbar personalizado */
-        .history-list::-webkit-scrollbar {
-            width: 8px;
+
+        .status-dot.transcribing {
+
+            background: #f59e0b;
+
+            box-shadow:
+                0 0 10px
+                rgba(
+                    245,
+                    158,
+                    11,
+                    0.6
+                );
+
+            animation:
+                pulse 1s infinite;
         }
 
-        .history-list::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 10px;
+
+        .status-dot.paused {
+
+            background: #60a5fa;
+
+            box-shadow:
+                0 0 10px
+                rgba(
+                    96,
+                    165,
+                    250,
+                    0.6
+                );
         }
 
-        .history-list::-webkit-scrollbar-thumb {
-            background: #667eea;
-            border-radius: 10px;
+
+        .status-dot.error {
+
+            background: #ef4444;
+
+            box-shadow:
+                0 0 10px
+                rgba(
+                    239,
+                    68,
+                    68,
+                    0.6
+                );
         }
 
-        .history-list::-webkit-scrollbar-thumb:hover {
-            background: #764ba2;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🎙️ Transcriptor en Tiempo Real</h1>
 
-        <!-- Subtítulo actual (grande) -->
-        <div class="subtitle-box">
-            <div class="current-subtitle" id="currentSubtitle">
-                Escuchando...
-            </div>
-        </div>
+        @keyframes pulse {
 
-        <!-- Historial de transcripciones -->
-        <div class="history-box">
-            <h2 class="history-title">📝 Historial</h2>
-            <ul class="history-list" id="historyList">
-                <!-- Se llena dinámicamente con JavaScript -->
-            </ul>
-        </div>
+            0%,
+            100% {
+                transform:
+                    scale(1);
+            }
 
-        <div class="status">
-            <span id="statusText">Conectando...</span>
-        </div>
-    </div>
-
-    <script>
-        // Elementos del DOM
-        const currentSubtitleEl = document.getElementById('currentSubtitle');
-        const historyListEl = document.getElementById('historyList');
-        const statusTextEl = document.getElementById('statusText');
-
-        // Cargar transcripciones iniciales
-        async function loadTranscriptions() {
-            try {
-                const response = await fetch('/api/transcriptions');
-                const transcriptions = await response.json();
-                
-                if (transcriptions.length > 0) {
-                    // Actualizar subtítulo actual (el último)
-                    const last = transcriptions[transcriptions.length - 1];
-                    currentSubtitleEl.textContent = last.text || 'Escuchando...';
-                    
-                    // Llenar historial
-                    updateHistory(transcriptions);
-                    
-                    statusTextEl.textContent = '✅ Conectado - Actualizando en tiempo real';
-                    statusTextEl.className = 'listening';
-                } else {
-                    statusTextEl.textContent = '⏳ Esperando audio...';
-                }
-            } catch (error) {
-                console.error('Error cargando transcripciones:', error);
-                statusTextEl.textContent = '❌ Error de conexión';
+            50% {
+                transform:
+                    scale(1.3);
             }
         }
 
-        // Actualizar lista de historial
-        function updateHistory(transcriptions) {
-            historyListEl.innerHTML = '';
-            
-            transcriptions.forEach(item => {
-                const li = document.createElement('li');
-                li.className = 'history-item';
-                li.innerHTML = `
-                    <div class="history-timestamp">${item.timestamp}</div>
-                    <div class="history-text">${item.text}</div>
-                `;
-                historyListEl.appendChild(li);
-            });
-            
-            // Scroll al final
-            historyListEl.scrollTop = historyListEl.scrollHeight;
+
+        /* ==================================================
+           CONTROLES
+        ================================================== */
+
+        .controls {
+
+            display: flex;
+
+            flex-wrap: wrap;
+
+            gap: 10px;
+
+            margin-top: 15px;
         }
 
-        // Cargar cada 2 segundos
-        loadTranscriptions();
-        setInterval(loadTranscriptions, 2000);
-    </script>
+
+        button {
+
+            border: 0;
+
+            border-radius: 10px;
+
+            padding:
+                11px 16px;
+
+            font-size: 0.95rem;
+
+            font-weight: 700;
+
+            cursor: pointer;
+
+            transition:
+                transform 0.15s,
+                opacity 0.15s;
+        }
+
+
+        button:hover {
+
+            transform:
+                translateY(-1px);
+        }
+
+
+        button:active {
+
+            transform:
+                translateY(1px);
+        }
+
+
+        .cut-button {
+
+            background:
+                #dc2626;
+
+            color: white;
+
+            flex: 1;
+        }
+
+
+        .pause-button {
+
+            background:
+                #374151;
+
+            color: white;
+
+            flex: 1;
+        }
+
+
+        .resume-button {
+
+            background:
+                #16a34a;
+
+            color: white;
+
+            flex: 1;
+        }
+
+
+        /* ==================================================
+           INFO
+        ================================================== */
+
+        .live-info {
+
+            display: grid;
+
+            grid-template-columns:
+                repeat(
+                    3,
+                    1fr
+                );
+
+            gap: 10px;
+
+            margin-top: 15px;
+        }
+
+
+        .info-card {
+
+            background:
+                #1f2937;
+
+            border:
+                1px solid #334155;
+
+            border-radius: 10px;
+
+            padding:
+                10px 12px;
+        }
+
+
+        .info-label {
+
+            font-size: 0.75rem;
+
+            color: #94a3b8;
+
+            text-transform:
+                uppercase;
+
+            margin-bottom: 4px;
+        }
+
+
+        .info-value {
+
+            font-size: 1rem;
+
+            color: white;
+
+            font-weight: 700;
+        }
+
+
+        /* ==================================================
+           CONVERSACIÓN
+        ================================================== */
+
+        .conversation {
+
+            flex: 1;
+
+            padding:
+                22px 15px 100px;
+
+            display: flex;
+
+            flex-direction: column;
+
+            gap: 14px;
+        }
+
+
+        .empty {
+
+            margin: auto;
+
+            text-align: center;
+
+            color: #64748b;
+
+            padding: 40px;
+        }
+
+
+        .message-wrapper {
+
+            display: flex;
+
+            flex-direction: column;
+
+            align-items: flex-start;
+
+            animation:
+                messageIn 0.25s
+                ease-out;
+        }
+
+
+        @keyframes messageIn {
+
+            from {
+
+                opacity: 0;
+
+                transform:
+                    translateY(10px);
+
+            }
+
+            to {
+
+                opacity: 1;
+
+                transform:
+                    translateY(0);
+
+            }
+        }
+
+
+        .message-meta {
+
+            display: flex;
+
+            align-items: center;
+
+            gap: 8px;
+
+            margin:
+                0 0 6px 12px;
+
+            font-size: 0.78rem;
+
+            color: #94a3b8;
+        }
+
+
+        .new-badge {
+
+            background:
+                #2563eb;
+
+            color: white;
+
+            border-radius:
+                999px;
+
+            padding:
+                2px 8px;
+
+            font-size:
+                0.68rem;
+
+            font-weight: 800;
+        }
+
+
+        .message {
+
+            max-width: min(
+                850px,
+                92%
+            );
+
+            background:
+                #1e293b;
+
+            border:
+                1px solid #334155;
+
+            border-radius:
+                14px;
+
+            border-top-left-radius:
+                4px;
+
+            padding:
+                15px 17px;
+
+            box-shadow:
+                0 5px 20px
+                rgba(
+                    0,
+                    0,
+                    0,
+                    0.18
+                );
+        }
+
+
+        .message.new {
+
+            border:
+                1px solid #2563eb;
+
+            box-shadow:
+                0 0 0 1px
+                rgba(
+                    37,
+                    99,
+                    235,
+                    0.15
+                );
+        }
+
+
+        .message-text {
+
+            color: #f8fafc;
+
+            font-size:
+                1.12rem;
+
+            line-height:
+                1.65;
+
+            white-space:
+                pre-wrap;
+
+            overflow-wrap:
+                anywhere;
+        }
+
+
+        /* ==================================================
+           FOOTER
+        ================================================== */
+
+        .footer {
+
+            position: fixed;
+
+            left: 0;
+
+            right: 0;
+
+            bottom: 0;
+
+            z-index: 20;
+
+            background:
+                rgba(
+                    15,
+                    23,
+                    42,
+                    0.94
+                );
+
+            backdrop-filter:
+                blur(10px);
+
+            border-top:
+                1px solid #263244;
+
+            padding:
+                10px 15px;
+        }
+
+
+        .footer-inner {
+
+            width: min(
+                1000px,
+                100%
+            );
+
+            margin: auto;
+
+            text-align: center;
+
+            color: #64748b;
+
+            font-size:
+                0.76rem;
+        }
+
+
+        @media (
+            max-width: 650px
+        ) {
+
+            .live-info {
+
+                grid-template-columns:
+                    1fr;
+
+            }
+
+
+            .message-text {
+
+                font-size:
+                    1rem;
+
+            }
+
+
+            .header-top {
+
+                align-items:
+                    flex-start;
+
+                flex-direction:
+                    column;
+
+            }
+        }
+
+    </style>
+</head>
+
+
+<body>
+
+<div class="app">
+
+
+    <!-- ====================================================
+         HEADER
+    ===================================================== -->
+
+    <header class="header">
+
+        <div class="header-top">
+
+            <div class="title">
+                🎙️ Live Caption
+            </div>
+
+
+            <div class="status">
+
+                <span
+                    class="status-dot"
+                    id="statusDot"
+                ></span>
+
+                <span
+                    id="statusText"
+                >
+                    Iniciando...
+                </span>
+
+            </div>
+
+        </div>
+
+
+        <!-- =================================================
+             CONTROLES
+        ================================================== -->
+
+        <div class="controls">
+
+            <button
+                class="cut-button"
+                id="cutButton"
+            >
+                🔴 TERMINAR SEGMENTO
+            </button>
+
+
+            <button
+                class="pause-button"
+                id="pauseButton"
+            >
+                🔇 PAUSAR ESCUCHA
+            </button>
+
+
+            <button
+                class="resume-button"
+                id="resumeButton"
+                style="display: none;"
+            >
+                ▶ REANUDAR ESCUCHA
+            </button>
+
+        </div>
+
+
+        <!-- =================================================
+             INFORMACIÓN
+        ================================================== -->
+
+        <div class="live-info">
+
+            <div class="info-card">
+
+                <div class="info-label">
+                    Estado
+                </div>
+
+                <div
+                    class="info-value"
+                    id="stateValue"
+                >
+                    Iniciando
+                </div>
+
+            </div>
+
+
+            <div class="info-card">
+
+                <div class="info-label">
+                    Segmento actual
+                </div>
+
+                <div
+                    class="info-value"
+                    id="durationValue"
+                >
+                    0.0 s
+                </div>
+
+            </div>
+
+
+            <div class="info-card">
+
+                <div class="info-label">
+                    En cola
+                </div>
+
+                <div
+                    class="info-value"
+                    id="queueValue"
+                >
+                    0
+                </div>
+
+            </div>
+
+        </div>
+
+    </header>
+
+
+    <!-- ====================================================
+         CONVERSACIÓN
+    ===================================================== -->
+
+    <main
+        class="conversation"
+        id="conversation"
+    >
+
+        <div
+            class="empty"
+            id="emptyState"
+        >
+            🎧 Esperando la primera intervención...
+        </div>
+
+    </main>
+
+
+</div>
+
+
+<!-- ========================================================
+     FOOTER
+========================================================= -->
+
+<footer class="footer">
+
+    <div class="footer-inner">
+
+        Live Caption · faster-whisper · CUDA · VAD
+
+    </div>
+
+</footer>
+
+
+<script>
+
+    const conversation =
+        document.getElementById(
+            "conversation"
+        );
+
+
+    const emptyState =
+        document.getElementById(
+            "emptyState"
+        );
+
+
+    const statusDot =
+        document.getElementById(
+            "statusDot"
+        );
+
+
+    const statusText =
+        document.getElementById(
+            "statusText"
+        );
+
+
+    const stateValue =
+        document.getElementById(
+            "stateValue"
+        );
+
+
+    const durationValue =
+        document.getElementById(
+            "durationValue"
+        );
+
+
+    const queueValue =
+        document.getElementById(
+            "queueValue"
+        );
+
+
+    const cutButton =
+        document.getElementById(
+            "cutButton"
+        );
+
+
+    const pauseButton =
+        document.getElementById(
+            "pauseButton"
+        );
+
+
+    const resumeButton =
+        document.getElementById(
+            "resumeButton"
+        );
+
+
+    let lastSegmentId = null;
+
+
+    // ======================================================
+    // ESTADO
+    // ======================================================
+
+    function updateStatus(
+        data
+    ) {
+
+        const state =
+            data.state || "unknown";
+
+
+        const messages = {
+
+            listening:
+                "🟢 ESCUCHANDO",
+
+            transcribing:
+                "🟡 TRANSCRIBIENDO",
+
+            paused:
+                "🔵 ESCUCHA PAUSADA",
+
+            error:
+                "🔴 ERROR",
+
+            starting:
+                "⏳ INICIANDO"
+
+        };
+
+
+        const readable =
+            messages[state]
+            || data.message
+            || "Estado desconocido";
+
+
+        statusText.textContent =
+            readable;
+
+
+        statusDot.className =
+            "status-dot";
+
+
+        if (
+            state === "transcribing"
+        ) {
+
+            statusDot.classList.add(
+                "transcribing"
+            );
+
+        }
+
+
+        if (
+            state === "paused"
+        ) {
+
+            statusDot.classList.add(
+                "paused"
+            );
+
+        }
+
+
+        if (
+            state === "error"
+        ) {
+
+            statusDot.classList.add(
+                "error"
+            );
+
+        }
+
+
+        stateValue.textContent =
+            data.message
+            || readable;
+
+
+        durationValue.textContent =
+            `${Number(
+                data.segment_duration
+                || 0
+            ).toFixed(1)} s`;
+
+
+        queueValue.textContent =
+            `${data.queue_size || 0}`;
+
+
+        if (
+            state === "paused"
+        ) {
+
+            pauseButton.style.display =
+                "none";
+
+            resumeButton.style.display =
+                "block";
+
+        } else {
+
+            pauseButton.style.display =
+                "block";
+
+            resumeButton.style.display =
+                "none";
+
+        }
+
+    }
+
+
+    // ======================================================
+    // HISTORIAL
+    // ======================================================
+
+    function updateHistory(
+        transcriptions
+    ) {
+
+        if (
+            !transcriptions.length
+        ) {
+
+            emptyState.style.display =
+                "block";
+
+            return;
+
+        }
+
+
+        emptyState.style.display =
+            "none";
+
+
+        conversation.innerHTML = "";
+
+
+        transcriptions.forEach(
+            (
+                item,
+                index
+            ) => {
+
+                const wrapper =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                wrapper.className =
+                    "message-wrapper";
+
+
+                const meta =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                meta.className =
+                    "message-meta";
+
+
+                const time =
+                    document.createElement(
+                        "span"
+                    );
+
+
+                time.textContent =
+                    item.timestamp
+                    || "--:--";
+
+
+                const duration =
+                    document.createElement(
+                        "span"
+                    );
+
+
+                duration.textContent =
+                    `· ${Number(
+                        item.duration
+                        || 0
+                    ).toFixed(1)} s`;
+
+
+                meta.appendChild(
+                    time
+                );
+
+
+                meta.appendChild(
+                    duration
+                );
+
+
+                if (
+                    item.segment_id
+                    === lastSegmentId
+                ) {
+
+                    const badge =
+                        document.createElement(
+                            "span"
+                        );
+
+                    badge.className =
+                        "new-badge";
+
+                    badge.textContent =
+                        "NUEVO";
+
+                    meta.appendChild(
+                        badge
+                    );
+
+                }
+
+
+                const message =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                message.className =
+                    "message";
+
+
+                if (
+                    item.segment_id
+                    === lastSegmentId
+                ) {
+
+                    message.classList.add(
+                        "new"
+                    );
+
+                }
+
+
+                const text =
+                    document.createElement(
+                        "div"
+                    );
+
+
+                text.className =
+                    "message-text";
+
+
+                text.textContent =
+                    item.text;
+
+
+                message.appendChild(
+                    text
+                );
+
+
+                wrapper.appendChild(
+                    meta
+                );
+
+
+                wrapper.appendChild(
+                    message
+                );
+
+
+                conversation.appendChild(
+                    wrapper
+                );
+
+            }
+        );
+
+
+        conversation.scrollTop =
+            conversation.scrollHeight;
+
+    }
+
+
+    // ======================================================
+    // CARGAR HISTORIAL
+    // ======================================================
+
+    async function loadTranscriptions() {
+
+        try {
+
+            const response =
+                await fetch(
+                    "/api/transcriptions"
+                );
+
+
+            if (
+                !response.ok
+            ) {
+                return;
+            }
+
+
+            const data =
+                await response.json();
+
+
+            updateHistory(
+                data
+            );
+
+
+        } catch (error) {
+
+            console.error(
+                "Error cargando historial:",
+                error
+            );
+
+        }
+
+    }
+
+
+    // ======================================================
+    // CARGAR ESTADO
+    // ======================================================
+
+    async function loadStatus() {
+
+        try {
+
+            const response =
+                await fetch(
+                    "/api/status"
+                );
+
+
+            if (
+                !response.ok
+            ) {
+                return;
+            }
+
+
+            const data =
+                await response.json();
+
+
+            updateStatus(
+                data
+            );
+
+
+        } catch (error) {
+
+            statusText.textContent =
+                "🔴 SERVIDOR NO DISPONIBLE";
+
+            statusDot.className =
+                "status-dot error";
+
+        }
+
+    }
+
+
+    // ======================================================
+    // CONTROL
+    // ======================================================
+
+    async function sendControl(
+        action
+    ) {
+
+        try {
+
+            await fetch(
+                "/api/control",
+                {
+
+                    method:
+                        "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body:
+                        JSON.stringify({
+                            action:
+                                action
+                        })
+
+                }
+            );
+
+        } catch (error) {
+
+            console.error(
+                "Error enviando control:",
+                error
+            );
+
+        }
+
+    }
+
+
+    // ======================================================
+    // BOTÓN: TERMINAR SEGMENTO
+    // ======================================================
+
+    cutButton.addEventListener(
+        "click",
+        async () => {
+
+            cutButton.disabled =
+                true;
+
+            cutButton.textContent =
+                "🔴 CORTANDO...";
+
+
+            await sendControl(
+                "force_cut"
+            );
+
+
+            setTimeout(
+                () => {
+
+                    cutButton.disabled =
+                        false;
+
+                    cutButton.textContent =
+                        "🔴 TERMINAR SEGMENTO";
+
+                },
+                500
+            );
+
+        }
+    );
+
+
+    // ======================================================
+    // BOTÓN: PAUSAR
+    // ======================================================
+
+    pauseButton.addEventListener(
+        "click",
+        async () => {
+
+            await sendControl(
+                "pause"
+            );
+
+            setTimeout(
+                loadStatus,
+                100
+            );
+
+        }
+    );
+
+
+    // ======================================================
+    // BOTÓN: REANUDAR
+    // ======================================================
+
+    resumeButton.addEventListener(
+        "click",
+        async () => {
+
+            await sendControl(
+                "resume"
+            );
+
+            setTimeout(
+                loadStatus,
+                100
+            );
+
+        }
+    );
+
+
+    // ======================================================
+    // DETECTAR NUEVO SEGMENTO
+    // ======================================================
+
+    async function refreshHistory() {
+
+        try {
+
+            const response =
+                await fetch(
+                    "/api/transcriptions"
+                );
+
+
+            if (
+                !response.ok
+            ) {
+                return;
+            }
+
+
+            const data =
+                await response.json();
+
+
+            if (
+                data.length > 0
+            ) {
+
+                const latest =
+                    data[
+                        data.length - 1
+                    ];
+
+
+                const latestId =
+                    latest.segment_id;
+
+
+                if (
+                    latestId
+                    !== lastSegmentId
+                ) {
+
+                    lastSegmentId =
+                        latestId;
+
+                    updateHistory(
+                        data
+                    );
+
+                }
+
+            } else {
+
+                updateHistory(
+                    data
+                );
+
+            }
+
+        } catch (error) {
+
+            console.error(
+                error
+            );
+
+        }
+
+    }
+
+
+    // ======================================================
+    // INICIO
+    // ======================================================
+
+    loadStatus();
+    loadTranscriptions();
+
+
+    setInterval(
+        loadStatus,
+        500
+    );
+
+
+    setInterval(
+        refreshHistory,
+        1000
+    );
+
+</script>
+
 </body>
+
 </html>

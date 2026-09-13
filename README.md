@@ -23,6 +23,7 @@ Guía rápida: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Transcripción con faster-whisper
 - Soporte GPU NVIDIA (CUDA)
 - Servidor web local para ver las transcripciones en el navegador
+- Controles en la UI: pausar, reanudar y cortar el segmento actual
 - Configuración centralizada en `config.py`
 
 ## Arquitectura
